@@ -6,6 +6,7 @@ type IndexRow = { id: number; f: string; d: string };
 type Tags = { subjects: string[]; emotions: string[]; intents: string[]; scenes: string[] };
 
 const remoteBase = "https://huggingface.co/datasets/YZhao09/meme_chn/resolve/main/emo/";
+const assetBase = import.meta.env.BASE_URL || "/";
 const pageSize = 24;
 
 const reviewed: Record<string, Tags & { title: string; local: string }> = {
@@ -68,7 +69,7 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch("/meme-index.json")
+    fetch(`${assetBase}meme-index.json`)
       .then(response => { if (!response.ok) throw new Error("index"); return response.json(); })
       .then((data: IndexRow[]) => { setRows(data); setStatus("ready"); })
       .catch(() => setStatus("error"));
@@ -117,7 +118,7 @@ export default function Home() {
         <div className="grid">
           {results.slice(0, visible).map(({ row, tags, reviewed: isReviewed }, index) => {
             const curated = reviewed[row.f];
-            const image = curated?.local || `${remoteBase}${encodeURIComponent(row.f)}?download=true`;
+            const image = curated?.local ? `${assetBase}${curated.local.replace(/^\//, "")}` : `${remoteBase}${encodeURIComponent(row.f)}?download=true`;
             return <article className="card" key={row.id}>
               <div className="meme remote-meme"><img src={image} alt={curated?.title || titleFrom(row)} loading="lazy" /><span className="rank">#{index + 1}</span><span className={isReviewed ? "verified" : "derived"}>{isReviewed ? "视觉已复核" : "描述标签"}</span></div>
               <div className="card-body"><div className="card-title"><h3>{curated?.title || titleFrom(row)}</h3><button aria-label="收藏">♡</button></div>
