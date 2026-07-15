@@ -64,6 +64,9 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
   const [sort, setSort] = useState<"match" | "reviewed">("match");
+  const [view, setView] = useState<"search" | "favorites">("search");
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [notice, setNotice] = useState("");
   const [visible, setVisible] = useState(pageSize);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,26 +78,57 @@ export default function Home() {
       .catch(() => setStatus("error"));
   }, []);
 
+  useEffect(() => {
+    try { setFavorites(new Set(JSON.parse(localStorage.getItem("meme-radar-favorites") || "[]"))); } catch { /* ignore invalid local data */ }
+  }, []);
+
   const results = useMemo(() => {
     const scored = rows.map(row => {
       const tags = reviewed[row.f] || deriveTags(row.d);
       return { row, tags, score: scoreRow(row, activeQuery, tags), reviewed: Boolean(reviewed[row.f]) };
     });
-    const matched = activeQuery ? scored.filter(item => item.score > 0) : scored;
+    const inView = view === "favorites" ? scored.filter(item => favorites.has(item.row.f)) : scored;
+    const matched = activeQuery && view === "search" ? inView.filter(item => item.score > 0) : inView;
     return matched.sort((a, b) => sort === "reviewed" ? Number(b.reviewed) - Number(a.reviewed) || b.score - a.score : b.score - a.score);
-  }, [rows, activeQuery, sort]);
+  }, [rows, activeQuery, sort, view, favorites]);
 
-  function search(value = query) { setQuery(value); setActiveQuery(value.trim()); setVisible(pageSize); }
+  function search(value = query) { setView("search"); setQuery(value); setActiveQuery(value.trim()); setVisible(pageSize); }
+
+  function toggleFavorite(filename: string) {
+    setFavorites(current => {
+      const next = new Set(current);
+      next.has(filename) ? next.delete(filename) : next.add(filename);
+      localStorage.setItem("meme-radar-favorites", JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  async function downloadImage(url: string, filename: string) {
+    try {
+      const response = await fetch(url);
+      const href = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = href; anchor.download = filename; anchor.click();
+      URL.revokeObjectURL(href);
+    } catch { window.open(url, "_blank", "noopener,noreferrer"); }
+  }
+
+  async function shareImage(url: string, title: string) {
+    try {
+      if (navigator.share) await navigator.share({ title, text: `这个表情包很适合你：${title}`, url });
+      else { await navigator.clipboard.writeText(url); setNotice("图片链接已复制"); setTimeout(() => setNotice(""), 1800); }
+    } catch { /* user cancelled sharing */ }
+  }
 
   return (
     <main>
       <header className="topbar">
         <button className="brand" onClick={() => search("")}><span>梗</span> 热梗雷达</button>
-        <nav><button className="nav-active">搜索</button><button>发现</button><button>收藏</button></nav>
+        <nav><button className={view === "search" ? "nav-active" : ""} onClick={() => setView("search")}>搜索</button><button className={view === "favorites" ? "nav-active" : ""} onClick={() => { setView("favorites"); setVisible(pageSize); }}>收藏{favorites.size ? ` ${favorites.size}` : ""}</button></nav>
         <div className="library-state"><i /> 远程图库已连接</div>
       </header>
 
-      <section className="hero">
+      {view === "search" && <section className="hero">
         <div className="eyebrow"><i /> {status === "ready" ? `${rows.length.toLocaleString()} 条元数据已索引 · 图片按需加载` : "正在连接远程图库"}</div>
         <h1>想说什么，<br /><em>搜一句</em>就行</h1>
         <p>按画面、情绪、意图和使用场景找表情包。图库不落地保存，搜索命中后再实时加载图片。</p>
@@ -104,24 +138,27 @@ export default function Home() {
         </form>
         <div className="suggestions"><b>试试这些</b>{suggestions.map(item => <button key={item} onClick={() => search(item)}>{item}</button>)}</div>
         <div className="pipeline"><span><b>{rows.length || "—"}</b> 元数据索引</span><span><b>8</b> 视觉已复核</span><span><b>0</b> 全量图片落地</span></div>
-      </section>
+      </section>}
 
       <section className="results">
-        <div className="result-head"><div><h2>{activeQuery ? `“${activeQuery}” 的结果` : "中文表情包库"}</h2><p>{status === "ready" ? `找到 ${results.length.toLocaleString()} 张 · 图片仅在进入视野时加载` : "正在读取搜索索引…"}</p></div>
+        <div className="result-head"><div><h2>{view === "favorites" ? "我的收藏" : activeQuery ? `“${activeQuery}” 的结果` : "中文表情包库"}</h2><p>{status === "ready" ? view === "favorites" ? `已收藏 ${results.length} 张 · 只保存在当前浏览器` : `找到 ${results.length.toLocaleString()} 张 · 图片仅在进入视野时加载` : "正在读取搜索索引…"}</p></div>
           <div className="sort"><button className={sort === "match" ? "selected" : ""} onClick={() => setSort("match")}>最匹配</button><button className={sort === "reviewed" ? "selected" : ""} onClick={() => setSort("reviewed")}>视觉已复核</button></div>
         </div>
 
         {status === "error" && <div className="empty"><b>索引加载失败</b><span>请刷新页面后重试。</span></div>}
         {status === "loading" && <div className="loading-grid">{Array.from({ length: 8 }).map((_, i) => <i key={i} />)}</div>}
-        {status === "ready" && results.length === 0 && <div className="empty"><b>暂时没搜到</b><span>换一种说法，或者先搜主体，例如“狗”“猫”“熊猫”。</span></div>}
+        {status === "ready" && view === "search" && results.length === 0 && <div className="empty"><b>暂时没搜到</b><span>换一种说法，或者先搜主体，例如“狗”“猫”“熊猫”。</span></div>}
+        {status === "ready" && view === "favorites" && results.length === 0 && <div className="empty"><b>还没有收藏</b><span>回到搜索页，点图片卡片上的五角星收藏。</span></div>}
 
         <div className="grid">
           {results.slice(0, visible).map(({ row, tags, reviewed: isReviewed }, index) => {
             const curated = reviewed[row.f];
             const image = curated?.local ? `${assetBase}${curated.local.replace(/^\//, "")}` : `${remoteBase}${encodeURIComponent(row.f)}?download=true`;
+            const title = curated?.title || titleFrom(row);
+            const isFavorite = favorites.has(row.f);
             return <article className="card" key={row.id}>
-              <div className="meme remote-meme"><img src={image} alt={curated?.title || titleFrom(row)} loading="lazy" /><span className="rank">#{index + 1}</span><span className={isReviewed ? "verified" : "derived"}>{isReviewed ? "视觉已复核" : "描述标签"}</span></div>
-              <div className="card-body"><div className="card-title"><h3>{curated?.title || titleFrom(row)}</h3><button aria-label="收藏">♡</button></div>
+              <div className="meme remote-meme"><img src={image} alt={title} loading="lazy" /><span className="rank">#{index + 1}</span><span className={isReviewed ? "verified" : "derived"}>{isReviewed ? "视觉已复核" : "描述标签"}</span></div>
+              <div className="card-body"><div className="card-title"><h3>{title}</h3><button className={isFavorite ? "favorite active" : "favorite"} aria-label={isFavorite ? "取消收藏" : "收藏"} onClick={() => toggleFavorite(row.f)}>{isFavorite ? "★" : "☆"}</button></div>
                 <div className="tags">
                   {tags.subjects.slice(0, 1).map(tag => <span key={`s-${tag}`}>主体 · {tag}</span>)}
                   {tags.intents.slice(0, 1).map(tag => <span key={`i-${tag}`}>意图 · {tag}</span>)}
@@ -129,14 +166,15 @@ export default function Home() {
                   {!tags.subjects.length && !tags.intents.length && !tags.emotions.length && <span>等待按需丰富</span>}
                 </div>
                 <p className="description">{row.d}</p>
-                <div className="meta"><span>{isReviewed ? "人工视觉抽检" : "图库描述生成"}</span><span>远程加载</span></div>
+                <div className="card-actions"><button onClick={() => downloadImage(image, row.f)}>↓ 下载</button><button onClick={() => shareImage(image, title)}>↗ 分享</button></div>
               </div>
             </article>;
           })}
         </div>
         {visible < results.length && <button className="load-more" onClick={() => setVisible(value => value + pageSize)}>再看 {Math.min(pageSize, results.length - visible)} 张</button>}
       </section>
-      <button className="floating" onClick={() => inputRef.current?.focus()}>⌕</button>
+      {view === "search" && <button className="floating" onClick={() => inputRef.current?.focus()}>⌕</button>}
+      {notice && <div className="notice" role="status">{notice}</div>}
     </main>
   );
 }
